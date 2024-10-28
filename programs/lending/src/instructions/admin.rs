@@ -1,4 +1,4 @@
-use crate::state::Bank;
+use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
@@ -28,6 +28,21 @@ pub struct InitBank<'info> {
     pub system_program: Program<'info, System>,
 }
 
+#[derive(Accounts)]
+pub struct InitUser<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + User::INIT_SPACE,
+        seeds = [payer.key().as_ref()],
+        bump,
+    )]
+    pub user: Account<'info, User>,
+    pub system_program: Program<'info, System>,
+}
+
 pub fn process_init_bank(
     ctx: Context<InitBank>,
     liquidation_threshold: u64,
@@ -38,5 +53,12 @@ pub fn process_init_bank(
     bank.authority = ctx.accounts.payer.key();
     bank.liquidation_threshold = liquidation_threshold;
     bank.max_ltv = max_ltv;
+    Ok(())
+}
+
+pub fn process_init_user(ctx: Context<InitUser>, usdc_address: Pubkey) -> Result<()> {
+    let user = &mut ctx.accounts.user;
+    user.owner = ctx.accounts.payer.key();
+    user.usdc_address = usdc_address;
     Ok(())
 }
