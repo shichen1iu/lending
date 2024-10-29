@@ -1,3 +1,5 @@
+use std::f64::consts::E;
+
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
@@ -55,9 +57,19 @@ pub fn process_withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
         deposited_value = user.deposited_sol;
     }
 
-    if amount > deposited_value {
-        return Err(ErrorCode::InsufficientFunds.into());
-    }
+    let time_diff = user.last_updated - Clock::get()?.unix_timestamp;
+
+    let bank = &mut ctx.accounts.bank;
+    //A = P e^(rt) 这里的r和t的单位要一致
+    bank.total_depoists =
+        (bank.total_depoists as f64 * E.powf(bank.interest_rate as f64 * time_diff as f64)) as u64;
+
+    // 计算每个share的价值
+    let value_per_share = bank.total_depoists as f64 / bank.total_deposit_shares as f64;
+
+    let user_value = deposited_value as f64 * value_per_share;
+
+    require!(user_value >= amount as f64, ErrorCode::InsufficientFunds);
 
     let transfer_cpi_accounts = TransferChecked {
         from: ctx.accounts.bank_token_account.to_account_info(),

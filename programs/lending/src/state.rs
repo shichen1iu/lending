@@ -24,9 +24,11 @@ pub struct Bank {
     pub total_depoists: u64,
     pub total_deposit_shares: u64,
     pub total_borrowed: u64,
+    pub total_borrowed_shares: u64,
     pub liquidation_threshold: u64,
     pub liquidation_bonus: u64,
     pub liquidation_close_factor: u64,
     pub max_ltv: u64, //max percentage of collateral 通过抵押物的价值能借出的最大金额
     pub last_updated: i64,
+    pub interest_rate: u64, //年化收益率
 }
