@@ -131,6 +131,9 @@ pub fn process_borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
             user.borrowed_sol_shares += user_shares;
         }
     }
+
+    user.last_updated_borrow = Clock::get()?.unix_timestamp;
+
     Ok(())
 }
 

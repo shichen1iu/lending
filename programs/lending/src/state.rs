@@ -14,6 +14,7 @@ pub struct User {
     pub borrowed_usdc_shares: u64,
     pub usdc_address: Pubkey, //保存usdc mint account的地址
     pub last_updated: i64,
+    pub last_updated_borrow: i64,
 }
 
 #[account]
