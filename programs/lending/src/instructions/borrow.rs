@@ -10,7 +10,7 @@ use pyth_solana_receiver_sdk::price_update::{get_feed_id_from_hex, PriceUpdateV2
 use crate::constants::*;
 use crate::error::ErrorCode;
 use crate::state::*;
-
+use crate::utils::calculate_collateral_interest;
 #[derive(Accounts)]
 pub struct Borrow<'info> {
     #[account(
@@ -135,15 +135,4 @@ pub fn process_borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
     user.last_updated_borrow = Clock::get()?.unix_timestamp;
 
     Ok(())
-}
-
-fn calculate_collateral_interest(
-    deposited: u64,
-    interest_rate: u64,
-    last_updated: i64,
-) -> Result<u64> {
-    let current_time = Clock::get()?.unix_timestamp;
-    let time_diff = current_time - last_updated;
-    let new_value = (deposited as f64 * E.powf(interest_rate as f64 * time_diff as f64)) as u64;
-    Ok(new_value)
 }

@@ -2,7 +2,7 @@ pub mod constants;
 pub mod error;
 pub mod instructions;
 pub mod state;
-
+pub mod utils;
 use anchor_lang::prelude::*;
 
 pub use constants::*;
@@ -36,5 +36,9 @@ pub mod lending {
 
     pub fn borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
         process_borrow(ctx, amount)
+    }
+
+    pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {
+        process_liquidate(ctx)
     }
 }
