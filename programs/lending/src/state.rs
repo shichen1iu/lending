@@ -28,8 +28,8 @@ pub struct Bank {
     pub total_borrowed_shares: u64,
     pub liquidation_threshold: u64,
     pub liquidation_bonus: u64,
-    pub liquidation_close_factor: u64,
-    pub max_ltv: u64, //max percentage of collateral 通过抵押物的价值能借出的最大金额
+    pub liquidation_close_factor: u64, //一在触发清算时，清算人可以一次性清算的最大债务百分比
+    pub max_ltv: u64, //Maximum Loan-to-Value Ratio 通过抵押物的价值能借出的最大金额
     pub last_updated: i64,
     pub interest_rate: u64, //年化收益率
 }

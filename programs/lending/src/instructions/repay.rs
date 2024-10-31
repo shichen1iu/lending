@@ -62,12 +62,13 @@ pub fn process_repay(ctx: Context<Repay>, amount: u64) -> Result<()> {
 
     let bank = &mut ctx.accounts.bank;
 
-    bank.total_borrowed -=
+    // 计算利息
+    bank.total_borrowed =
         (bank.total_borrowed as f64 * E.powf(bank.interest_rate as f64 * time_diff as f64)) as u64;
 
     let value_per_share = bank.total_borrowed as f64 / bank.total_borrowed_shares as f64;
 
-    let user_value = borrow_value / value_per_share as u64;
+    let user_value = borrow_value.checked_mul(value_per_share as u64).unwrap();
 
     require!(user_value >= amount, ErrorCode::OverRepay);
 

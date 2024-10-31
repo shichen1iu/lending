@@ -48,13 +48,13 @@ pub struct Withdraw<'info> {
 pub fn process_withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
     let user = &mut ctx.accounts.user;
 
-    // 使用deposited_value来用户存储的资产
-    let deposited_value: u64;
+    // 使用deposited_value_shares来用户存储资产的份额
+    let deposited_value_shares: u64;
 
     if ctx.accounts.mint.to_account_info().key() == user.usdc_address {
-        deposited_value = user.deposited_usdc;
+        deposited_value_shares = user.deposited_usdc_shares;
     } else {
-        deposited_value = user.deposited_sol;
+        deposited_value_shares = user.deposited_sol_shares;
     }
 
     let time_diff = user.last_updated - Clock::get()?.unix_timestamp;
@@ -67,7 +67,7 @@ pub fn process_withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
     // 计算每个share的价值
     let value_per_share = bank.total_depoists as f64 / bank.total_deposit_shares as f64;
 
-    let user_value = deposited_value as f64 * value_per_share;
+    let user_value = deposited_value_shares as f64 * value_per_share;
 
     require!(user_value >= amount as f64, ErrorCode::InsufficientFunds);
 
@@ -92,8 +92,7 @@ pub fn process_withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
 
     let bank = &mut ctx.accounts.bank;
 
-    let shares_to_remove =
-        (amount as f64 / bank.total_depoists as f64) * bank.total_depoists as f64;
+    let shares_to_remove = (amount as f64 / value_per_share) as u64;
 
     let user = &mut ctx.accounts.user;
 

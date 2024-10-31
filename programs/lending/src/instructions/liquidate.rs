@@ -5,7 +5,6 @@ use crate::utils::calculate_collateral_interest;
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_2022::spl_token_2022::solana_zk_token_sdk::instruction::transfer,
     token_interface::{transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
 use pyth_solana_receiver_sdk::price_update::{get_feed_id_from_hex, PriceUpdateV2};
@@ -69,8 +68,9 @@ pub struct Liquidate<'info> {
 
 pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
     let collateral_bank = &mut ctx.accounts.collateral_bank;
-    let user = &mut ctx.accounts.user;
     let borrowed_bank = &mut ctx.accounts.borrowed_bank;
+
+    let user = &mut ctx.accounts.user;
 
     let price_update = &mut ctx.accounts.price_update;
 
@@ -81,8 +81,12 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
     let usdc_price =
         price_update.get_price_no_older_than(&Clock::get()?, MAX_AGE, &usdc_feed_id)?;
 
+    //都是以usd为单位
     let total_collateral: u64;
-    let total_borrowed: u64;
+    let total_borrowed_in_usd: u64;
+
+    //总共借款的清算金额= 借款 + 利息
+    let borrow_liquidation_amount: u64;
 
     match ctx.accounts.collateral_mint.to_account_info().key() {
         key if key == user.usdc_address => {
@@ -92,12 +96,13 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
                 user.last_updated,
             )?;
             total_collateral = usdc_price.price as u64 * new_usdc;
-            let new_sol = calculate_collateral_interest(
+            //借款的金额
+            borrow_liquidation_amount = calculate_collateral_interest(
                 user.borrowed_sol,
                 collateral_bank.interest_rate,
                 user.last_updated_borrow,
             )?;
-            total_borrowed = sol_price.price as u64 * new_sol;
+            total_borrowed_in_usd = sol_price.price as u64 * borrow_liquidation_amount;
         }
         _ => {
             let new_sol = calculate_collateral_interest(
@@ -106,22 +111,28 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
                 user.last_updated,
             )?;
             total_collateral = sol_price.price as u64 * new_sol;
-            let new_usdc = calculate_collateral_interest(
+            borrow_liquidation_amount = calculate_collateral_interest(
                 user.borrowed_usdc,
                 collateral_bank.interest_rate,
                 user.last_updated_borrow,
             )?;
-            total_borrowed = usdc_price.price as u64 * new_usdc;
+            total_borrowed_in_usd = usdc_price.price as u64 * borrow_liquidation_amount;
         }
     }
 
-    let health_factor = (total_collateral as f64 * collateral_bank.liquidation_threshold as f64)
-        / total_borrowed as f64;
+    //通过同一单位usd 来计算 健康因子
+    let health_factor = total_collateral
+        .checked_mul(collateral_bank.liquidation_threshold)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10_000)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(total_borrowed_in_usd)
+        .ok_or(ErrorCode::MathOverflow)?;
 
     //如果health_factor >=1,那么就不需要被清算,反之需要被清算
-    require!(health_factor < 1.0, ErrorCode::NotUnderCollateralized);
+    require!(health_factor < 1_u64, ErrorCode::NotUnderCollateralized);
 
-    //当需要清算的时候,首先被清算的用户需要将借的钱归还
+    //当需要清算的时候,首先被清算的用户需要将借的钱根据liquidation_close_factor归还
     let transfer_to_bank = TransferChecked {
         from: ctx
             .accounts
@@ -136,20 +147,48 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
         transfer_to_bank,
     );
 
-    //计算清算金额
-    let liquidation_amount = total_borrowed
+    //计算借款的清算金额
+    let borrow_liquidation_amount_liquidation_close_factor = borrow_liquidation_amount
         .checked_mul(borrowed_bank.liquidation_close_factor)
-        .unwrap();
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10_000)
+        .ok_or(ErrorCode::MathOverflow)?;
 
     transfer_checked(
         transfer_to_bank_cpi_ctx,
-        liquidation_amount,
+        borrow_liquidation_amount_liquidation_close_factor,
         ctx.accounts.borrowed_mint.decimals,
     )?;
 
-    //liquidator_amount是liquidator可以获得的质押代币数量:清算金额加上清算奖金
-    let liquidator_amount =
-        (liquidation_amount * collateral_bank.liquidation_bonus) + liquidation_amount;
+    //将borrow_liquidation_amount_liquidation_close_factor 换算成usd
+    //再将usd 换算成 collateral_liquidation_amount_liquidation_close_factor
+    let collateral_liquidation_amount_liquidation_close_factor: u64;
+    match ctx.accounts.collateral_mint.to_account_info().key() {
+        key if key == user.usdc_address => {
+            collateral_liquidation_amount_liquidation_close_factor =
+                borrow_liquidation_amount_liquidation_close_factor
+                    .checked_mul(sol_price.price as u64)
+                    .ok_or(ErrorCode::MathOverflow)?
+                    .checked_div(usdc_price.price as u64)
+                    .ok_or(ErrorCode::MathOverflow)?;
+        }
+        _ => {
+            collateral_liquidation_amount_liquidation_close_factor =
+                borrow_liquidation_amount_liquidation_close_factor
+                    .checked_mul(usdc_price.price as u64)
+                    .ok_or(ErrorCode::MathOverflow)?
+                    .checked_div(sol_price.price as u64)
+                    .ok_or(ErrorCode::MathOverflow)?;
+        }
+    }
+
+    //collateral_liquidation_amount 是liquidator可以获得的质押代币数量:归还的钱加上清算奖金
+    //即 collateral_liquidation_amount_liquidation_close_factor  + bonus
+    let collateral_liquidation_amount = collateral_liquidation_amount_liquidation_close_factor
+        .checked_mul(collateral_bank.liquidation_bonus)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_add(collateral_liquidation_amount_liquidation_close_factor)
+        .ok_or(ErrorCode::MathOverflow)?;
 
     let transfer_to_liquidator = TransferChecked {
         from: ctx.accounts.collateral_bank_token_account.to_account_info(),
@@ -176,8 +215,23 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
     //将加上清算奖励的抵押贷币数量转账给liquidator
     transfer_checked(
         transfer_to_liquidator_ctx_ctx,
-        liquidator_amount,
+        collateral_liquidation_amount,
         ctx.accounts.collateral_mint.decimals,
     )?;
+
+    // 更新 quilidator 清算了之后,bank和用户的信息
+    let qulidator_collateral_amount_shares: u64;
+    match ctx.accounts.collateral_mint.to_account_info().key() {
+        key if key == user.usdc_address => {
+            qulidator_collateral_amount_shares = liquidator_amount
+                .checked_mul(collateral_bank.total_borrowed_shares)
+                .ok_or(ErrorCode::MathOverflow)?
+                .checked_div(collateral_bank.total_borrowed)
+                .ok_or(ErrorCode::MathOverflow)?;
+            collateral_bank.total_borrowed_shares -= qulidator_collateral_amount_shares;
+            collateral_bank.total_borrowed -= liquidation_amount;
+        }
+        _ => {}
+    }
     Ok(())
 }

@@ -18,8 +18,14 @@ pub mod lending {
         ctx: Context<InitBank>,
         liquidation_threshold: u64,
         max_ltv: u64,
+        liquidation_close_factor: u64,
     ) -> Result<()> {
-        process_init_bank(ctx, liquidation_threshold, max_ltv)
+        process_init_bank(
+            ctx,
+            liquidation_threshold,
+            liquidation_close_factor,
+            max_ltv,
+        )
     }
 
     pub fn init_user(ctx: Context<InitUser>, usdc_address: Pubkey) -> Result<()> {
@@ -36,6 +42,10 @@ pub mod lending {
 
     pub fn borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
         process_borrow(ctx, amount)
+    }
+
+    pub fn repay(ctx: Context<Repay>, amount: u64) -> Result<()> {
+        process_repay(ctx, amount)
     }
 
     pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {

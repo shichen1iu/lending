@@ -45,7 +45,7 @@ pub fn process_deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     let transfer_cpi_account = TransferChecked {
         from: ctx.accounts.user_token_account.to_account_info(),
         mint: ctx.accounts.mint.to_account_info(),
-        to: ctx.accounts.user_token_account.to_account_info(),
+        to: ctx.accounts.bank_token_account.to_account_info(),
         authority: ctx.accounts.payer.to_account_info(),
     };
     let cpi_program = ctx.accounts.token_program.to_account_info();

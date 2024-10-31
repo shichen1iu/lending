@@ -1,5 +1,3 @@
-use std::f64::consts::E;
-
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
@@ -54,11 +52,14 @@ pub fn process_borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
 
     let price_update = &mut ctx.accounts.price_update;
 
+    //抵押物的价值 (以usd为单位)
     let total_collateral: u64;
+    // 用户想要借出的金额(以usd为单位)
+    let amount_in_usd: u64;
 
     match ctx.accounts.mint.to_account_info().key() {
         key if key == user.usdc_address => {
-            // 这里的mint为usdc这表明用户想要质押sol换取usdc,所以就要计算的当前sol的价值
+            // 这里的mint为usdc这表明用户想要用deposited的sol换取usdc,所以就要计算的当前sol的价值
             let sol_feed_id = get_feed_id_from_hex(SOL_USD_FEED_ID)?;
             let sol_price =
                 price_update.get_price_no_older_than(&Clock::get()?, MAX_AGE, &sol_feed_id)?; //得到不stale于100s的价格
@@ -68,6 +69,7 @@ pub fn process_borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
                 user.last_updated,
             )?;
             total_collateral = sol_price.price as u64 * new_value;
+            amount_in_usd = amount * sol_price.price as u64;
         }
         _ => {
             let usdc_feed_id = get_feed_id_from_hex(USDC_USD_FEED_ID)?;
@@ -79,14 +81,16 @@ pub fn process_borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
                 user.last_updated,
             )?;
             total_collateral = usdc_price.price as u64 * new_value;
+            amount_in_usd = amount * usdc_price.price as u64;
         }
     }
+    // 通过抵押物的价值计算出用户可以借出的最大金额(usd为单位)
+    let borrowable_amount = total_collateral.checked_mul(bank.max_ltv).unwrap();
 
-    let borrowable_amount = total_collateral
-        .checked_mul(bank.liquidation_threshold)
-        .unwrap();
-
-    require!(borrowable_amount >= amount, ErrorCode::OverBorrowableAmount);
+    require!(
+        borrowable_amount >= amount_in_usd,
+        ErrorCode::OverBorrowableAmount
+    );
 
     let transfer_cpx_account = TransferChecked {
         from: ctx.accounts.bank_token_account.to_account_info(),
