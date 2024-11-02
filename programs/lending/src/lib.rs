@@ -19,11 +19,13 @@ pub mod lending {
         liquidation_threshold: u64,
         max_ltv: u64,
         liquidation_close_factor: u64,
+        liquidation_bonus: u64,
     ) -> Result<()> {
         process_init_bank(
             ctx,
             liquidation_threshold,
             liquidation_close_factor,
+            liquidation_bonus,
             max_ltv,
         )
     }

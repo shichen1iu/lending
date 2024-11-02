@@ -38,7 +38,7 @@ pub struct Borrow<'info> {
     )]
     pub user_token_account: InterfaceAccount<'info, TokenAccount>,
     pub mint: InterfaceAccount<'info, Mint>,
-    pub price_update: Account<'info, PriceUpdateV2>, //使用pyth oracles 来更新价格
+    pub sol_or_usdc_price_feed: Account<'info, PriceUpdateV2>, //使用pyth oracles 来更新价格
     #[account(mut)]
     pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -50,10 +50,10 @@ pub fn process_borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
     let bank = &mut ctx.accounts.bank;
     let user = &mut ctx.accounts.user;
 
-    let price_update = &mut ctx.accounts.price_update;
+    let sol_or_usdc_price_feed = &mut ctx.accounts.sol_or_usdc_price_feed;
 
     //抵押物的价值 (以usd为单位)
-    let total_collateral: u64;
+    let total_collateral_in_usd: u64;
     // 用户想要借出的金额(以usd为单位)
     let amount_in_usd: u64;
 
@@ -61,34 +61,47 @@ pub fn process_borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
         key if key == user.usdc_address => {
             // 这里的mint为usdc这表明用户想要用deposited的sol换取usdc,所以就要计算的当前sol的价值
             let sol_feed_id = get_feed_id_from_hex(SOL_USD_FEED_ID)?;
-            let sol_price =
-                price_update.get_price_no_older_than(&Clock::get()?, MAX_AGE, &sol_feed_id)?; //得到不stale于100s的价格
+            let sol_price = sol_or_usdc_price_feed.get_price_no_older_than(
+                &Clock::get()?,
+                MAX_AGE,
+                &sol_feed_id,
+            )?; //得到不stale于100s的价格
             let new_value = calculate_collateral_interest(
                 user.deposited_sol,
                 bank.interest_rate,
                 user.last_updated,
             )?;
-            total_collateral = sol_price.price as u64 * new_value;
+            total_collateral_in_usd = sol_price.price as u64 * new_value;
             amount_in_usd = amount * sol_price.price as u64;
         }
         _ => {
             let usdc_feed_id = get_feed_id_from_hex(USDC_USD_FEED_ID)?;
-            let usdc_price =
-                price_update.get_price_no_older_than(&Clock::get()?, MAX_AGE, &usdc_feed_id)?;
+            let usdc_price = sol_or_usdc_price_feed.get_price_no_older_than(
+                &Clock::get()?,
+                MAX_AGE,
+                &usdc_feed_id,
+            )?;
             let new_value = calculate_collateral_interest(
                 user.deposited_usdc,
                 bank.interest_rate,
                 user.last_updated,
             )?;
-            total_collateral = usdc_price.price as u64 * new_value;
+            total_collateral_in_usd = usdc_price.price as u64 * new_value;
             amount_in_usd = amount * usdc_price.price as u64;
         }
     }
+
+    msg!("total_collateral_in_usd: {}", total_collateral_in_usd);
+    msg!("bank.max_ltv: {}", bank.max_ltv);
     // 通过抵押物的价值计算出用户可以借出的最大金额(usd为单位)
-    let borrowable_amount = total_collateral.checked_mul(bank.max_ltv).unwrap();
+    let borrowable_amount_in_usd = total_collateral_in_usd
+        .checked_div(10_000)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_mul(bank.max_ltv)
+        .ok_or(ErrorCode::MathOverflow)?;
 
     require!(
-        borrowable_amount >= amount_in_usd,
+        borrowable_amount_in_usd >= amount_in_usd,
         ErrorCode::OverBorrowableAmount
     );
 
@@ -124,6 +137,9 @@ pub fn process_borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
         .total_borrowed_shares
         .checked_mul(borrow_ratio)
         .unwrap();
+
+    bank.total_borrowed_shares += user_shares;
+    bank.total_borrowed += amount;
 
     match ctx.accounts.mint.to_account_info().key() {
         key if key == user.usdc_address => {

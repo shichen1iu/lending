@@ -15,25 +15,25 @@ pub struct Liquidate<'info> {
         seeds = [collateral_mint.key().as_ref()],
         bump
     )]
-    pub collateral_bank: Account<'info, Bank>,
+    pub collateral_bank: Box<Account<'info, Bank>>,
     #[account(
         mut,
         seeds = [borrowed_mint.key().as_ref()],
         bump
     )]
-    pub borrowed_bank: Account<'info, Bank>,
+    pub borrowed_bank: Box<Account<'info, Bank>>,
     #[account(
         mut,
         seeds = [b"treasury",collateral_mint.key().as_ref()],
         bump
     )]
-    pub collateral_bank_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub collateral_bank_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(
         mut,
         seeds = [b"treasury",borrowed_mint.key().as_ref()],
         bump
     )]
-    pub borrowed_bank_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub borrowed_bank_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(
         init_if_needed,
         payer = liquidator,
@@ -41,7 +41,7 @@ pub struct Liquidate<'info> {
         associated_token::authority = liquidator,
         associated_token::token_program = token_program,
     )]
-    pub liquidator_collateral_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub liquidator_collateral_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(
         init_if_needed,
         payer = liquidator,
@@ -49,16 +49,17 @@ pub struct Liquidate<'info> {
         associated_token::authority = liquidator,
         associated_token::token_program = token_program,
     )]
-    pub liquidator_borrowed_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub liquidator_borrowed_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(
         mut,
         seeds = [liquidator.key().as_ref()],
         bump
     )]
-    pub user: Account<'info, User>,
+    pub user: Box<Account<'info, User>>,
     pub collateral_mint: InterfaceAccount<'info, Mint>,
     pub borrowed_mint: InterfaceAccount<'info, Mint>,
-    pub price_update: Account<'info, PriceUpdateV2>,
+    pub sol_price_feed: Account<'info, PriceUpdateV2>,
+    pub usdc_price_feed: Account<'info, PriceUpdateV2>,
     #[account(mut)]
     pub liquidator: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
@@ -72,14 +73,16 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
 
     let user = &mut ctx.accounts.user;
 
-    let price_update = &mut ctx.accounts.price_update;
+    let sol_price_feed = &mut ctx.accounts.sol_price_feed;
+    let usdc_price_feed = &mut ctx.accounts.usdc_price_feed;
 
     let sol_feed_id = get_feed_id_from_hex(SOL_USD_FEED_ID)?;
     let usdc_feed_id = get_feed_id_from_hex(USDC_USD_FEED_ID)?;
 
-    let sol_price = price_update.get_price_no_older_than(&Clock::get()?, MAX_AGE, &sol_feed_id)?;
+    let sol_price =
+        sol_price_feed.get_price_no_older_than(&Clock::get()?, MAX_AGE, &sol_feed_id)?;
     let usdc_price =
-        price_update.get_price_no_older_than(&Clock::get()?, MAX_AGE, &usdc_feed_id)?;
+        usdc_price_feed.get_price_no_older_than(&Clock::get()?, MAX_AGE, &usdc_feed_id)?;
 
     //都是以usd为单位
     let total_collateral: u64;
@@ -160,11 +163,25 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
         ctx.accounts.borrowed_mint.decimals,
     )?;
 
+    //计算借款的份额 并 更新信息
+    let borrow_shares = borrow_liquidation_amount_liquidation_close_factor
+        .checked_mul(borrowed_bank.total_borrowed_shares)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(borrowed_bank.total_borrowed)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    borrowed_bank.total_borrowed_shares -= borrow_shares;
+    borrowed_bank.total_borrowed -= borrow_liquidation_amount_liquidation_close_factor;
+
     //将borrow_liquidation_amount_liquidation_close_factor 换算成usd
     //再将usd 换算成 collateral_liquidation_amount_liquidation_close_factor
+    //同时 更新 user的借款信息
     let collateral_liquidation_amount_liquidation_close_factor: u64;
     match ctx.accounts.collateral_mint.to_account_info().key() {
         key if key == user.usdc_address => {
+            user.borrowed_sol -= borrow_liquidation_amount_liquidation_close_factor;
+            user.borrowed_sol_shares -= borrow_shares;
+
             collateral_liquidation_amount_liquidation_close_factor =
                 borrow_liquidation_amount_liquidation_close_factor
                     .checked_mul(sol_price.price as u64)
@@ -173,6 +190,9 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
                     .ok_or(ErrorCode::MathOverflow)?;
         }
         _ => {
+            user.borrowed_usdc -= borrow_liquidation_amount_liquidation_close_factor;
+            user.borrowed_usdc_shares -= borrow_shares;
+
             collateral_liquidation_amount_liquidation_close_factor =
                 borrow_liquidation_amount_liquidation_close_factor
                     .checked_mul(usdc_price.price as u64)
@@ -186,6 +206,8 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
     //即 collateral_liquidation_amount_liquidation_close_factor  + bonus
     let collateral_liquidation_amount = collateral_liquidation_amount_liquidation_close_factor
         .checked_mul(collateral_bank.liquidation_bonus)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10_000)
         .ok_or(ErrorCode::MathOverflow)?
         .checked_add(collateral_liquidation_amount_liquidation_close_factor)
         .ok_or(ErrorCode::MathOverflow)?;
@@ -219,19 +241,25 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
         ctx.accounts.collateral_mint.decimals,
     )?;
 
-    // 更新 quilidator 清算了之后,bank和用户的信息
-    let qulidator_collateral_amount_shares: u64;
+    let collateral_shares = collateral_liquidation_amount
+        .checked_mul(collateral_bank.total_deposit_shares)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(collateral_bank.total_depoists)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    collateral_bank.total_deposit_shares -= collateral_shares;
+    collateral_bank.total_depoists -= collateral_liquidation_amount;
+
+    // 更新清算了之后用户的信息
     match ctx.accounts.collateral_mint.to_account_info().key() {
         key if key == user.usdc_address => {
-            qulidator_collateral_amount_shares = liquidator_amount
-                .checked_mul(collateral_bank.total_borrowed_shares)
-                .ok_or(ErrorCode::MathOverflow)?
-                .checked_div(collateral_bank.total_borrowed)
-                .ok_or(ErrorCode::MathOverflow)?;
-            collateral_bank.total_borrowed_shares -= qulidator_collateral_amount_shares;
-            collateral_bank.total_borrowed -= liquidation_amount;
+            user.deposited_usdc -= collateral_liquidation_amount;
+            user.deposited_usdc_shares -= collateral_shares;
         }
-        _ => {}
+        _ => {
+            user.deposited_sol -= collateral_liquidation_amount;
+            user.deposited_sol_shares -= collateral_shares;
+        }
     }
     Ok(())
 }

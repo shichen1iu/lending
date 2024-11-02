@@ -107,15 +107,22 @@ export class BankrunContextWrapper {
   }
 
   async moveTimeForward(increment: number): Promise<void> {
+    // 1. 获取当前的时钟状态
     const currentClock = await this.context.banksClient.getClock();
+
+    // 2. 计算新的时间戳（当前时间戳 + 增量）
     const newUnixTimestamp = currentClock.unixTimestamp + BigInt(increment);
+
+    // 3. 创建新的时钟状态，只更新时间戳，其他值保持不变
     const newClock = new Clock(
-      currentClock.slot,
-      currentClock.epochStartTimestamp,
-      currentClock.epoch,
-      currentClock.leaderScheduleEpoch,
-      newUnixTimestamp
+      currentClock.slot, // 当前槽位
+      currentClock.epochStartTimestamp, // epoch开始时间
+      currentClock.epoch, // 当前epoch
+      currentClock.leaderScheduleEpoch, // 领导者调度epoch
+      newUnixTimestamp // 新的Unix时间戳
     );
+
+    // 4. 设置新的时钟状态
     await this.context.setClock(newClock);
   }
 
@@ -158,7 +165,9 @@ export class BankrunConnection {
     return this._banksClient.getSlot();
   }
 
+  //将BankrunConnection转换成SolanaConnection
   toConnection(): SolanaConnection {
+    //一种特殊写法 先将BankrunConnection转换成unkown类型再转换成SolanaConnection
     return this as unknown as SolanaConnection;
   }
 
@@ -185,6 +194,7 @@ export class BankrunConnection {
     publicKey: PublicKey
   ): Promise<null | AccountInfo<Buffer>> {
     const parsedAccountInfo = await this.getParsedAccountInfo(publicKey);
+    //三元表达式
     return parsedAccountInfo ? parsedAccountInfo.value : null;
   }
 
@@ -194,6 +204,7 @@ export class BankrunConnection {
   ): Promise<RpcResponseAndContext<null | AccountInfo<Buffer>>> {
     return await this.getParsedAccountInfo(publicKey);
   }
+  
   async sendRawTransaction(
     rawTransaction: Buffer | Uint8Array | Array<number>,
     // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types

@@ -30,7 +30,7 @@ pub struct Deposit<'info> {
     #[account(
         mut,
         associated_token::mint = mint,
-        associated_token::authority = user,
+        associated_token::authority = payer,
         associated_token::token_program = token_program,
     )]
     pub user_token_account: InterfaceAccount<'info, TokenAccount>,
@@ -56,16 +56,22 @@ pub fn process_deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
 
     let bank = &mut ctx.accounts.bank;
 
-    if bank.total_depoists == 0 {
+    let user_shares = if bank.total_depoists == 0 {
+        // 首次存款，shares 等于存款金额
         bank.total_depoists = amount;
         bank.total_deposit_shares = amount;
-    }
+        amount
+    } else {
+        // 计算新增份额：(amount * total_shares) / total_deposits
+        amount
+            .checked_mul(bank.total_deposit_shares)
+            .unwrap()
+            .checked_div(bank.total_depoists)
+            .unwrap()
+    };
 
-    let deposit_ratio = amount.checked_div(bank.total_depoists).unwrap();
-    let user_shares = bank
-        .total_deposit_shares
-        .checked_mul(deposit_ratio)
-        .unwrap();
+    bank.total_depoists = bank.total_depoists.checked_add(amount).unwrap();
+    bank.total_deposit_shares = bank.total_deposit_shares.checked_add(user_shares).unwrap();
 
     let user = &mut ctx.accounts.user;
 
@@ -79,9 +85,6 @@ pub fn process_deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
             user.deposited_sol_shares += user_shares;
         }
     }
-
-    bank.total_depoists += amount;
-    bank.total_deposit_shares += user_shares;
 
     user.last_updated = Clock::get()?.unix_timestamp;
     Ok(())

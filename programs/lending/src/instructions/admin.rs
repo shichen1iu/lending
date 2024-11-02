@@ -47,6 +47,7 @@ pub fn process_init_bank(
     ctx: Context<InitBank>,
     liquidation_threshold: u64,
     liquidation_close_factor: u64,
+    liquidation_bonus: u64,
     max_ltv: u64,
 ) -> Result<()> {
     let bank = &mut ctx.accounts.bank;
@@ -55,7 +56,8 @@ pub fn process_init_bank(
     bank.liquidation_threshold = liquidation_threshold;
     bank.max_ltv = max_ltv;
     bank.interest_rate = (0.05 / (365.0 * 24.0 * 60.0 * 60.0)) as u64; //年化收益率5% 转换为每秒的收益率
-    bank.liquidation_close_factor = liquidation_close_factor; 
+    bank.liquidation_close_factor = liquidation_close_factor;
+    bank.liquidation_bonus = liquidation_bonus;
     Ok(())
 }
 
