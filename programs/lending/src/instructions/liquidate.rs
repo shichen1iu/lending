@@ -98,14 +98,23 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
                 collateral_bank.interest_rate,
                 user.last_updated,
             )?;
-            total_collateral = usdc_price.price as u64 * new_usdc;
+            total_collateral = new_usdc
+                .checked_mul(usdc_price.price as u64)
+                .ok_or(ErrorCode::MathOverflow)?
+                .checked_div(10u64.pow(PRICE_DECIMALS as u32))
+                .ok_or(ErrorCode::MathOverflow)?;
             //借款的金额
             borrow_liquidation_amount = calculate_collateral_interest(
                 user.borrowed_sol,
                 collateral_bank.interest_rate,
                 user.last_updated_borrow,
             )?;
-            total_borrowed_in_usd = sol_price.price as u64 * borrow_liquidation_amount;
+            msg!("borrow_liquidation_amount: {}", borrow_liquidation_amount);
+            total_borrowed_in_usd = borrow_liquidation_amount
+                .checked_mul(sol_price.price as u64)
+                .ok_or(ErrorCode::MathOverflow)?
+                .checked_div(10u64.pow(PRICE_DECIMALS as u32))
+                .ok_or(ErrorCode::MathOverflow)?;
         }
         _ => {
             let new_sol = calculate_collateral_interest(
@@ -113,21 +122,35 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
                 collateral_bank.interest_rate,
                 user.last_updated,
             )?;
-            total_collateral = sol_price.price as u64 * new_sol;
+            total_collateral = new_sol
+                .checked_mul(sol_price.price as u64)
+                .ok_or(ErrorCode::MathOverflow)?
+                .checked_div(10u64.pow(PRICE_DECIMALS as u32))
+                .ok_or(ErrorCode::MathOverflow)?;
             borrow_liquidation_amount = calculate_collateral_interest(
                 user.borrowed_usdc,
                 collateral_bank.interest_rate,
                 user.last_updated_borrow,
             )?;
-            total_borrowed_in_usd = usdc_price.price as u64 * borrow_liquidation_amount;
+            total_borrowed_in_usd = borrow_liquidation_amount
+                .checked_mul(usdc_price.price as u64)
+                .ok_or(ErrorCode::MathOverflow)?
+                .checked_div(10u64.pow(PRICE_DECIMALS as u32))
+                .ok_or(ErrorCode::MathOverflow)?;
         }
     }
 
     //通过同一单位usd 来计算 健康因子
+    msg!("数据溢出位置1");
+    msg!("total_collateral_in_usd: {}", total_collateral);
+    msg!("total_borrowed_in_usd: {}", total_borrowed_in_usd);
+    msg!("sol_price: {}", sol_price.price);
+    msg!("usdc_price: {}", usdc_price.price);
+    msg!("liquidation_threshold: {}", collateral_bank.liquidation_threshold);
     let health_factor = total_collateral
-        .checked_mul(collateral_bank.liquidation_threshold)
+        .checked_div(10_000 as u64)
         .ok_or(ErrorCode::MathOverflow)?
-        .checked_div(10_000)
+        .checked_mul(collateral_bank.liquidation_threshold)
         .ok_or(ErrorCode::MathOverflow)?
         .checked_div(total_borrowed_in_usd)
         .ok_or(ErrorCode::MathOverflow)?;
@@ -150,6 +173,7 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
         transfer_to_bank,
     );
 
+    msg!("数据溢出位置2");
     //计算借款的清算金额
     let borrow_liquidation_amount_liquidation_close_factor = borrow_liquidation_amount
         .checked_mul(borrowed_bank.liquidation_close_factor)
@@ -163,6 +187,7 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
         ctx.accounts.borrowed_mint.decimals,
     )?;
 
+    msg!("数据溢出位置3");
     //计算借款的份额 并 更新信息
     let borrow_shares = borrow_liquidation_amount_liquidation_close_factor
         .checked_mul(borrowed_bank.total_borrowed_shares)
@@ -176,6 +201,7 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
     //将borrow_liquidation_amount_liquidation_close_factor 换算成usd
     //再将usd 换算成 collateral_liquidation_amount_liquidation_close_factor
     //同时 更新 user的借款信息
+    msg!("数据溢出位置4");
     let collateral_liquidation_amount_liquidation_close_factor: u64;
     match ctx.accounts.collateral_mint.to_account_info().key() {
         key if key == user.usdc_address => {
@@ -202,6 +228,7 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
         }
     }
 
+    msg!("数据溢出位置5");
     //collateral_liquidation_amount 是liquidator可以获得的质押代币数量:归还的钱加上清算奖金
     //即 collateral_liquidation_amount_liquidation_close_factor  + bonus
     let collateral_liquidation_amount = collateral_liquidation_amount_liquidation_close_factor
@@ -241,6 +268,7 @@ pub fn process_liquidate(ctx: Context<Liquidate>) -> Result<()> {
         ctx.accounts.collateral_mint.decimals,
     )?;
 
+    msg!("数据溢出位置6");
     let collateral_shares = collateral_liquidation_amount
         .checked_mul(collateral_bank.total_deposit_shares)
         .ok_or(ErrorCode::MathOverflow)?

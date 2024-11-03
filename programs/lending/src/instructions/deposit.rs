@@ -86,6 +86,7 @@ pub fn process_deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         }
     }
 
+
     user.last_updated = Clock::get()?.unix_timestamp;
     Ok(())
 }

@@ -16,12 +16,14 @@ import { PublicKey, Keypair, Connection } from "@solana/web3.js";
 
 import { Lending } from "../target/types/lending";
 import { BankrunContextWrapper } from "../bankrun-utils/bankrunConnection";
+import { assert } from "chai";
 
 describe("Lending Bankrun Tests", async () => {
   const IDL = require("../target/idl/lending.json");
   let signer: Keypair;
   let usdcBankAccount: PublicKey;
   let solBankAccount: PublicKey;
+  let userAccount: PublicKey;
 
   let solTokenAccount: PublicKey;
   let provider: BankrunProvider;
@@ -59,14 +61,13 @@ describe("Lending Bankrun Tests", async () => {
     .getPriceFeedAccountAddress(0, USDC_PRICE_FEED_ID)
     .toBase58();
 
-  console.log("solUsdPriceFeedAccount:", solUsdPriceFeedAccount);
-  console.log("usdcUsdPriceFeedAccount:", usdcUsdPriceFeedAccount);
+  // console.log("solUsdPriceFeedAccount:", solUsdPriceFeedAccount);
+  // console.log("usdcUsdPriceFeedAccount:", usdcUsdPriceFeedAccount);
 
   const solUsdPriceFeedAccountPubkey = new PublicKey(solUsdPriceFeedAccount);
   const solUsdPriceFeedAccountInfo = await devnetConnection.getAccountInfo(
     solUsdPriceFeedAccountPubkey
   );
-  console.log("solUsdPriceFeedAccountAddress:", solUsdPriceFeedAccountPubkey);
 
   const usdcUsdPriceFeedAccountPubkey = new PublicKey(usdcUsdPriceFeedAccount);
   const usdcUsdPriceFeedAccountInfo = await devnetConnection.getAccountInfo(
@@ -106,6 +107,11 @@ describe("Lending Bankrun Tests", async () => {
     signer.publicKey,
     null,
     6
+  );
+
+  [userAccount] = PublicKey.findProgramAddressSync(
+    [signer.publicKey.toBuffer()],
+    program.programId
   );
 
   [usdcBankAccount] = PublicKey.findProgramAddressSync(
@@ -215,7 +221,7 @@ describe("Lending Bankrun Tests", async () => {
 
   it("Test Deposit", async () => {
     const depositUSDC = await program.methods
-      .deposit(new BN(100_000_000))
+      .deposit(new BN(1000_000_000))
       .accounts({
         mint: mintUSDC,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -224,11 +230,15 @@ describe("Lending Bankrun Tests", async () => {
       .rpc({ commitment: "confirmed" });
 
     console.log("Deposit USDC", depositUSDC);
+
+    const user = await program.account.user.fetch(userAccount);
+
+    assert.equal(user.depositedUsdc.toNumber(), 1000_000_000);
   });
 
   it("Test Borrow", async () => {
     const borrowSOL = await program.methods
-      .borrow(new BN(100_000))
+      .borrow(new BN(2_000_000))
       .accounts({
         mint: mintSOL,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -238,11 +248,14 @@ describe("Lending Bankrun Tests", async () => {
       .rpc({ commitment: "confirmed" });
 
     console.log("Borrow SOL", borrowSOL);
+
+    const user = await program.account.user.fetch(userAccount);
+    assert.equal(user.borrowedSol.toNumber(), 2_000_000);
   });
 
   it("Test Repay", async () => {
     const repaySOL = await program.methods
-      .repay(new BN(100_000))
+      .repay(new BN(1_000_000))
       .accounts({
         mint: mintSOL,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -251,6 +264,9 @@ describe("Lending Bankrun Tests", async () => {
       .rpc({ commitment: "confirmed" });
 
     console.log("Repay SOL", repaySOL);
+
+    const user = await program.account.user.fetch(userAccount);
+    assert.equal(user.borrowedSol.toNumber(), 1_000_000);
   });
 
   it("Test Withdraw", async () => {
@@ -264,7 +280,11 @@ describe("Lending Bankrun Tests", async () => {
       .rpc({ commitment: "confirmed" });
 
     console.log("Withdraw USDC", withdrawUSDC);
+
+    const user = await program.account.user.fetch(userAccount);
+    assert.equal(user.depositedUsdc.toNumber(), 950_000_000);
   });
+
   it("test liquidate", async () => {
     await program.methods
       .liquidate()
@@ -280,62 +300,40 @@ describe("Lending Bankrun Tests", async () => {
       .rpc({ commitment: "confirmed" });
   });
 
-  // it("Test Liquidation", async () => {
-  //   // 存入1000 USDC
-  //   const depositAmount = new BN(5_000_000_000); // 5000 USDC
-  //   await program.methods
-  //     .deposit(depositAmount)
-  //     .accounts({
-  //       mint: mintUSDC,
-  //       tokenProgram: TOKEN_PROGRAM_ID,
-  //     })
-  //     .signers([signer])
-  //     .rpc({ commitment: "confirmed" });
+  it("test liquidate by chaning sol price", async () => {
+    // 创建一个使仓位低于水线的mock价格数据
+    const newSolPrice = {
+      price: 800_000_000, // 提高sol的价格
+      conf: 0,
+      expo: -8,
+      publish_time: Math.floor(Date.now() / 1000),
+    };
 
-  //   // 借出200SOL
-  //   const borrowAmount = new BN(200_000_000); // 200 SOL
-  //   await program.methods
-  //     .borrow(borrowAmount)
-  //     .accounts({
-  //       mint: mintSOL,
-  //       tokenProgram: TOKEN_PROGRAM_ID,
-  //       priceUpdate: solUsdPriceFeedAccount,
-  //     })
-  //     .signers([signer])
-  //     .rpc({ commitment: "confirmed" });
+    // Update price feed account with new price
+    const feedAccountInfo = await devnetConnection.getAccountInfo(
+      solUsdPriceFeedAccountPubkey
+    );
 
-  //   // 创建一个使仓位低于水线的mock价格数据
-  //   const newSolPrice = {
-  //     price: 2000, // 提高sol的价格
-  //     conf: 0,
-  //     expo: -8,
-  //     publish_time: Math.floor(Date.now() / 1000),
-  //   };
+    feedAccountInfo.data.price = newSolPrice;
+    context.setAccount(solUsdPriceFeedAccountPubkey, feedAccountInfo);
+    console.log("改变后的feedAccountInfo.data:", feedAccountInfo.data);
+    console.log("New SOL Price:", feedAccountInfo.data.price);
 
-  //   // Update price feed account with new price
-  //   const feedAccountInfo = await devnetConnection.getAccountInfo(
-  //     solUsdPriceFeedAccountPubkey
-  //   );
+    // 开始清算
+    await program.methods
+      .liquidate()
+      .accounts({
+        collateralMint: mintUSDC,
+        borrowedMint: mintSOL,
+        solPriceFeed: solUsdPriceFeedAccountPubkey,
+        usdcPriceFeed: usdcUsdPriceFeedAccountPubkey,
+        liquidator: signer.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([signer])
+      .rpc({ commitment: "confirmed" });
 
-  //   feedAccountInfo.data.price = newSolPrice;
-  //   context.setAccount(solUsdPriceFeedAccountPubkey, feedAccountInfo);
-
-  //   console.log("New SOL Price:", feedAccountInfo.data.price);
-
-  //   // 开始清算
-  //   await program.methods
-  //     .liquidate()
-  //     .accounts({
-  //       collateralMint: mintUSDC,
-  //       borrowedMint: mintSOL,
-  //       priceUpdate: solUsdPriceFeedAccount,
-  //       liquidator: signer.publicKey,
-  //       tokenProgram: TOKEN_PROGRAM_ID,
-  //     })
-  //     .signers([signer])
-  //     .rpc({ commitment: "confirmed" });
-
-  //   // Add assertions to verify liquidation worked
-  //   // Check updated bank states, user positions, etc
-  // });
+    // Add assertions to verify liquidation worked
+    // Check updated bank states, user positions, etc
+  });
 });
