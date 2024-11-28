@@ -1,9 +1,9 @@
-<<<<<<< HEAD
 # Mini-lending
 
 ## 概述
 这是一个去中心化借贷协议，目前支持 SOL 和 USDC 两种资产。用户可以在不同资产池中进行存款和借款操作。
-![[Pasted image 20241128153607.png]]
+![Pasted image 20241128153607](https://github.com/user-attachments/assets/c09d3b80-96ae-4335-8649-7fd011acd99b)
+
 ## 主要功能
 
 ### 存款
@@ -27,4 +27,4 @@
 - 及时关注健康因子的变化
 - 市场波动可能导致抵押物价值变化，进而影响健康因子
 
-![[Pasted image 20241128154041.png]]
+![Pasted image 20241128154041](https://github.com/user-attachments/assets/68b949fe-a398-468b-ba0b-118638f8b318)
