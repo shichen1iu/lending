@@ -184,7 +184,7 @@
   dependencies:
     bn.js "^5.2.1"
 
-"@pythnetwork/pyth-solana-receiver@^0.8.0":
+"@pythnetwork/pyth-solana-receiver@^0.8.2":
   version "0.8.2"
   resolved "https://registry.npmjs.org/@pythnetwork/pyth-solana-receiver/-/pyth-solana-receiver-0.8.2.tgz"
   integrity sha512-WrrdwwhSYvvB5vJEL+SfPnfuxgkRKMeKdZvGFFwe6ENrMhrQCM05oDkvNNYfXATLcpQGRAyBu9l1xIxUxixpqw==

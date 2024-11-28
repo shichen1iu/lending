@@ -37,23 +37,29 @@ import bs58 from "bs58";
 import { BN, Wallet } from "@coral-xyz/anchor";
 import { Account, unpackAccount } from "@solana/spl-token";
 
+// 定义连接类型，可以是 Solana 实际连接或测试环境连接
 export type Connection = SolanaConnection | BankrunConnection;
 
+// 定义测试环境交易元数据的标准化格式
 type BankrunTransactionMetaNormalized = {
-  logMessages: string[];
-  err: TransactionError;
+  logMessages: string[]; // 交易日志消息
+  err: TransactionError; // 交易错误信息
 };
 
+// 定义测试环境交易响应格式
 type BankrunTransactionRespose = {
-  slot: number;
-  meta: BankrunTransactionMetaNormalized;
+  slot: number; // 交易所在的槽位
+  meta: BankrunTransactionMetaNormalized; // 交易元数据
 };
 
+/**
+ * 测试环境上下文的包装类，提供便捷的交互方法
+ */
 export class BankrunContextWrapper {
-  public readonly connection: BankrunConnection;
-  public readonly context: ProgramTestContext;
-  public readonly provider: BankrunProvider;
-  public readonly commitment: Commitment = "confirmed";
+  public readonly connection: BankrunConnection; // 测试环境连接实例
+  public readonly context: ProgramTestContext; // 程序测试上下文
+  public readonly provider: BankrunProvider; // Bankrun 提供者实例
+  public readonly commitment: Commitment = "confirmed"; // 默认确认级别
 
   constructor(context: ProgramTestContext) {
     this.context = context;
@@ -64,6 +70,12 @@ export class BankrunContextWrapper {
     );
   }
 
+  /**
+   * 发送交易到测试环境
+   * @param tx 要发送的交易对象
+   * @param additionalSigners 可选的额外签名者数组
+   * @returns 返回交易签名字符串
+   */
   async sendTransaction(
     tx: Transaction,
     additionalSigners?: Keypair[]
@@ -77,10 +89,12 @@ export class BankrunContextWrapper {
     return await this.connection.sendTransaction(tx);
   }
 
-  async getMinimumBalanceForRentExemption(_: number): Promise<number> {
-    return 10 * LAMPORTS_PER_SOL;
-  }
-
+  /**
+   * 为指定密钥对提供测试资金
+   * @param keypair 要注资的密钥对或钱包
+   * @param lamports 要转账的 lamports 数量
+   * @returns 返回交易签名字符串
+   */
   async fundKeypair(
     keypair: Keypair | Wallet,
     lamports: number | bigint
@@ -96,36 +110,44 @@ export class BankrunContextWrapper {
     return await this.sendTransaction(tx);
   }
 
+  /**
+   * 获取最新的区块哈希
+   * @returns 返回最新的区块哈希字符串
+   */
   async getLatestBlockhash(): Promise<Blockhash> {
     const blockhash = await this.connection.getLatestBlockhash("finalized");
-
     return blockhash.blockhash;
   }
 
+  /**
+   * 打印指定交易的日志信息
+   * @param signature 交易签名字符串
+   */
   printTxLogs(signature: string): void {
     this.connection.printTxLogs(signature);
   }
 
+  /**
+   * 向前移动测试环境的时间
+   * @param increment 要增加的秒数
+   */
   async moveTimeForward(increment: number): Promise<void> {
-    // 1. 获取当前的时钟状态
     const currentClock = await this.context.banksClient.getClock();
-
-    // 2. 计算新的时间戳（当前时间戳 + 增量）
     const newUnixTimestamp = currentClock.unixTimestamp + BigInt(increment);
-
-    // 3. 创建新的时钟状态，只更新时间戳，其他值保持不变
     const newClock = new Clock(
-      currentClock.slot, // 当前槽位
-      currentClock.epochStartTimestamp, // epoch开始时间
-      currentClock.epoch, // 当前epoch
-      currentClock.leaderScheduleEpoch, // 领导者调度epoch
-      newUnixTimestamp // 新的Unix时间戳
+      currentClock.slot,
+      currentClock.epochStartTimestamp,
+      currentClock.epoch,
+      currentClock.leaderScheduleEpoch,
+      newUnixTimestamp
     );
-
-    // 4. 设置新的时钟状态
     await this.context.setClock(newClock);
   }
 
+  /**
+   * 设置测试环境的时间戳
+   * @param unix_timestamp 要设置的 UNIX 时间戳
+   */
   async setTimestamp(unix_timestamp: number): Promise<void> {
     const currentClock = await this.context.banksClient.getClock();
     const newUnixTimestamp = BigInt(unix_timestamp);
@@ -140,15 +162,20 @@ export class BankrunContextWrapper {
   }
 }
 
+/**
+ * 测试环境连接类，模拟 Solana Connection 的行为
+ */
 export class BankrunConnection {
   private readonly _banksClient: BanksClient;
   private readonly context: ProgramTestContext;
+  // 存储交易签名到交易元数据的映射
   private transactionToMeta: Map<
     TransactionSignature,
     BanksTransactionResultWithMeta
   > = new Map();
-  private clock: Clock;
+  private clock: Clock; // 测试环境时钟
 
+  // 用于事件订阅的状态管理
   private nextClientSubscriptionId = 0;
   private onLogCallbacks = new Map<number, LogsCallback>();
   private onAccountChangeCallbacks = new Map<
@@ -161,35 +188,54 @@ export class BankrunConnection {
     this.context = context;
   }
 
+  /**
+   * 获取当前槽位号
+   * @returns 返回当前槽位号
+   */
   getSlot(): Promise<bigint> {
     return this._banksClient.getSlot();
   }
 
-  //将BankrunConnection转换成SolanaConnection
+  /**
+   * 将 BankrunConnection 转换为 SolanaConnection
+   * @returns 返回转换后的 SolanaConnection 对象
+   */
   toConnection(): SolanaConnection {
-    //一种特殊写法 先将BankrunConnection转换成unkown类型再转换成SolanaConnection
     return this as unknown as SolanaConnection;
   }
 
+  /**
+   * 获取代币账户信息
+   * @param publicKey 代币账户的公钥
+   * @returns 返回解析后的代币账户信息
+   */
   async getTokenAccount(publicKey: PublicKey): Promise<Account> {
     const info = await this.getAccountInfo(publicKey);
     return unpackAccount(publicKey, info, info.owner);
   }
 
+  /**
+   * 批量获取多个账户的信息
+   * @param publicKeys 要查询的公钥数组
+   * @param _commitmentOrConfig 可选的确认级别或配置
+   * @returns 返回账户信息数组
+   */
   async getMultipleAccountsInfo(
     publicKeys: PublicKey[],
     _commitmentOrConfig?: Commitment
   ): Promise<AccountInfo<Buffer>[]> {
     const accountInfos = [];
-
     for (const publicKey of publicKeys) {
       const accountInfo = await this.getAccountInfo(publicKey);
       accountInfos.push(accountInfo);
     }
-
     return accountInfos;
   }
 
+  /**
+   * 获取账户信息
+   * @param publicKey 要查询的账户公钥
+   */
   async getAccountInfo(
     publicKey: PublicKey
   ): Promise<null | AccountInfo<Buffer>> {
@@ -204,10 +250,15 @@ export class BankrunConnection {
   ): Promise<RpcResponseAndContext<null | AccountInfo<Buffer>>> {
     return await this.getParsedAccountInfo(publicKey);
   }
-  
+
+  /**
+   * 发送原始交易数据
+   * @param rawTransaction 原始交易数据
+   * @param _options 可选的配置选项
+   * @returns 返回交易签名
+   */
   async sendRawTransaction(
     rawTransaction: Buffer | Uint8Array | Array<number>,
-    // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
     _options?: any
   ): Promise<TransactionSignature> {
     const tx = Transaction.from(rawTransaction);
@@ -215,6 +266,11 @@ export class BankrunConnection {
     return signature;
   }
 
+  /**
+   * 发送交易
+   * @param tx 要发送的交易
+   * @returns 交易签名
+   */
   async sendTransaction(tx: Transaction): Promise<TransactionSignature> {
     const banksTransactionMeta = await this._banksClient.tryProcessTransaction(
       tx
@@ -266,6 +322,10 @@ export class BankrunConnection {
     return signature;
   }
 
+  /**
+   * 更新测试环境的槽位和时钟
+   * @private
+   */
   private async updateSlotAndClock() {
     const currentSlot = await this.getSlot();
     const nextSlot = currentSlot + BigInt(1);
@@ -439,52 +499,77 @@ export class BankrunConnection {
     // This function signature only exists to match the web3js interface
   }
 
+  /**
+   * 注册日志监听器
+   * @param filter 日志过滤器
+   * @param callback 回调函数
+   * @param _commitment 确认级别
+   * @returns 返回订阅ID
+   */
   onLogs(
     filter: LogsFilter,
     callback: LogsCallback,
     _commitment?: Commitment
   ): ClientSubscriptionId {
     const subscriptId = this.nextClientSubscriptionId;
-
     this.onLogCallbacks.set(subscriptId, callback);
-
     this.nextClientSubscriptionId += 1;
-
     return subscriptId;
   }
 
+  /**
+   * 移除日志监听器
+   * @param clientSubscriptionId 订阅ID
+   */
   async removeOnLogsListener(
     clientSubscriptionId: ClientSubscriptionId
   ): Promise<void> {
     this.onLogCallbacks.delete(clientSubscriptionId);
   }
 
+  /**
+   * 注册账户变更监听器
+   * @param publicKey 要监听的账户公钥
+   * @param callback 回调函数
+   * @param _commitment 确认级别
+   * @returns 返回订阅ID
+   */
   onAccountChange(
     publicKey: PublicKey,
     callback: AccountChangeCallback,
-    // @ts-ignore
     _commitment?: Commitment
   ): ClientSubscriptionId {
     const subscriptId = this.nextClientSubscriptionId;
-
     this.onAccountChangeCallbacks.set(subscriptId, [publicKey, callback]);
-
     this.nextClientSubscriptionId += 1;
-
     return subscriptId;
   }
 
+  /**
+   * 移除账户变更监听器
+   * @param clientSubscriptionId 订阅ID
+   */
   async removeAccountChangeListener(
     clientSubscriptionId: ClientSubscriptionId
   ): Promise<void> {
     this.onAccountChangeCallbacks.delete(clientSubscriptionId);
   }
 
+  /**
+   * 获取租金豁免所需的最小余额
+   * @param _ 账户大小（字节）
+   * @returns 返回所需的最小余额（lamports）
+   */
   async getMinimumBalanceForRentExemption(_: number): Promise<number> {
     return 10 * LAMPORTS_PER_SOL;
   }
 }
 
+/**
+ * 将数值转换为 BN (Big Number) 类型
+ * @param value 要转换的数值
+ * @returns BN 实例
+ */
 export function asBN(value: number | bigint): BN {
   return new BN(Number(value));
 }

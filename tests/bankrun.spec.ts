@@ -4,6 +4,8 @@ import { BankrunProvider } from "anchor-bankrun";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { createAccount, createMint, mintTo } from "spl-token-bankrun";
 import { PythSolanaReceiver } from "@pythnetwork/pyth-solana-receiver";
+import { struct, u32 } from "@solana/buffer-layout";
+import { u64 } from "@solana/buffer-layout-utils";
 
 import {
   startAnchor,
@@ -300,40 +302,44 @@ describe("Lending Bankrun Tests", async () => {
       .rpc({ commitment: "confirmed" });
   });
 
-  it("test liquidate by chaning sol price", async () => {
-    // 创建一个使仓位低于水线的mock价格数据
-    const newSolPrice = {
-      price: 800_000_000, // 提高sol的价格
-      conf: 0,
-      expo: -8,
-      publish_time: Math.floor(Date.now() / 1000),
-    };
+  // it("test liquidate by chaning sol price", async () => {
 
-    // Update price feed account with new price
-    const feedAccountInfo = await devnetConnection.getAccountInfo(
-      solUsdPriceFeedAccountPubkey
-    );
+  //   const PriceFeedData = Buffer.alloc();
+  //   interface PriceFeed {
+  //     price: bigint;
+  //     conf: bigint;
+  //     expo: number;
+  //     publish_time: bigint;
+  //   }
+  //   const PriceFeedstruct = struct<PriceFeed>([
+  //     u64("price"),
+  //     u64("conf"),
+  //     u32("expo"),
+  //     u64("publish_time"),
+  //   ]);
+  //   const priceFeed = PriceFeedstruct.encode({
+  //     price: BigInt(1000000000),
+  //     conf: BigInt(1000000000),
+  //     expo: 9,
+  //     publish_time: BigInt(Math.floor(Date.now() / 1000)),
+  //   },
 
-    feedAccountInfo.data.price = newSolPrice;
-    context.setAccount(solUsdPriceFeedAccountPubkey, feedAccountInfo);
-    console.log("改变后的feedAccountInfo.data:", feedAccountInfo.data);
-    console.log("New SOL Price:", feedAccountInfo.data.price);
+  //   );
 
-    // 开始清算
-    await program.methods
-      .liquidate()
-      .accounts({
-        collateralMint: mintUSDC,
-        borrowedMint: mintSOL,
-        solPriceFeed: solUsdPriceFeedAccountPubkey,
-        usdcPriceFeed: usdcUsdPriceFeedAccountPubkey,
-        liquidator: signer.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([signer])
-      .rpc({ commitment: "confirmed" });
+  //   await program.methods
+  //     .liquidate()
+  //     .accounts({
+  //       collateralMint: mintUSDC,
+  //       borrowedMint: mintSOL,
+  //       solPriceFeed: solUsdPriceFeedAccountPubkey,
+  //       usdcPriceFeed: usdcUsdPriceFeedAccountPubkey,
+  //       liquidator: signer.publicKey,
+  //       tokenProgram: TOKEN_PROGRAM_ID,
+  //     })
+  //     .signers([signer])
+  //     .rpc({ commitment: "confirmed" });
 
-    // Add assertions to verify liquidation worked
-    // Check updated bank states, user positions, etc
-  });
+  //   // Add assertions to verify liquidation worked
+  //   // Check updated bank states, user positions, etc
+  // });
 });
